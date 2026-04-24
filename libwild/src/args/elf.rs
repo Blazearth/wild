@@ -1920,6 +1920,15 @@ impl platform::Args for ElfArgs {
         }
     }
 
+    fn segment_start_override(&self, name: crate::parsing::SegmentName) -> Option<u64> {
+        match name {
+            crate::parsing::SegmentName::Text => self.ttext,
+            crate::parsing::SegmentName::Data => self.tdata,
+            crate::parsing::SegmentName::Bss => self.tbss,
+            crate::parsing::SegmentName::Rodata => None,
+        }
+    }
+
     fn version_script_path(&self) -> Option<&Path> {
         self.version_script_path.as_deref()
     }
