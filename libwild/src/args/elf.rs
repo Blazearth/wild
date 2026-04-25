@@ -1925,7 +1925,7 @@ impl platform::Args for ElfArgs {
             crate::parsing::SegmentName::Text => self.ttext,
             crate::parsing::SegmentName::Data => self.tdata,
             crate::parsing::SegmentName::Bss => self.tbss,
-            crate::parsing::SegmentName::Rodata => None,
+            crate::parsing::SegmentName::Rodata | crate::parsing::SegmentName::Other => None,
         }
     }
 

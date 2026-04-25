@@ -5,9 +5,17 @@
 // RISC-V: BFD complains about missing __global_pointer$ (defined in the default
 // linker script)
 //#SkipArch:riscv64
+// ld merges all sections into a single segment when no PHDRS are specified,
+// while wild uses separate RO/RX/RW segments.
+//#DiffIgnore:segment.LOAD.RWX.alignment
+//#DiffIgnore:segment.LOAD.RX.alignment
+// Wild uses alignment 1 for .text when the linker script doesn't specify it;
+// GNU ld uses the architecture's natural instruction alignment (4 on aarch64).
+//#DiffIgnore:section.text.alignment
 
 // Config 1: no -T flags — SEGMENT_START returns the linker script defaults.
-// text/rodata default to 0x600000, data/bss default to 0.
+// Defaults are 0x10/0x11/0x12/0x13 — distinct from actual section addresses
+// to prove SEGMENT_START returns the default, not the actual segment address.
 //#Config:no-overrides:default
 //#Variant:0
 
@@ -30,15 +38,18 @@ extern char bss_start;
 void _start(void) {
   runtime_init();
 
-  /* Variant 0: no -T flags, SEGMENT_START returns the linker script defaults.
-   * Variant 1: -T overrides passed to Wild. rodata has no -T flag so it
-   *            still returns its default 0x600000. */
+  /* Variant 0: no -T flags, SEGMENT_START returns the linker script defaults
+   * (0x10, 0x11, 0x12, 0x13). These are intentionally distinct from the actual
+   * section addresses to prove SEGMENT_START returns the default, not the
+   * segment address.
+   * Variant 1: -T overrides. rodata has no -Trodata so it still returns 0x11.
+   */
   int variant = VARIANT;
 
-  unsigned long expect_text = (variant == 0) ? 0x600000 : 0x700000;
-  unsigned long expect_rodata = 0x600000; /* no -Trodata, always default */
-  unsigned long expect_data = (variant == 0) ? 0 : 0x800000;
-  unsigned long expect_bss = (variant == 0) ? 0 : 0x900000;
+  unsigned long expect_text = (variant == 0) ? 0x10 : 0x700000;
+  unsigned long expect_rodata = 0x11; /* no -Trodata, always default */
+  unsigned long expect_data = (variant == 0) ? 0x12 : 0x800000;
+  unsigned long expect_bss = (variant == 0) ? 0x13 : 0x900000;
 
   if (ptr_to_int(&text_start) != expect_text) {
     exit_syscall(10);
