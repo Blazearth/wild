@@ -104,6 +104,9 @@ impl<'data, P: Platform> Resolver<'data, P> {
             symbol_db.args,
         );
 
+        // Apply -Ttext/-Tdata/-Tbss (and --section-start) overrides to built-in sections.
+        output_sections.apply_section_start_overrides(symbol_db.args);
+
         canonicalise_undefined_symbols(
             self.undefined_symbols,
             output_sections,
