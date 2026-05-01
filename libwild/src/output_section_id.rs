@@ -581,6 +581,22 @@ impl<'data, P: Platform> OutputSections<'data, P> {
         }
     }
 
+    /// Applies `--section-start` / `-Ttext` / `-Tdata` / `-Tbss` overrides to the built-in
+    /// sections `.text`, `.data`, and `.bss`. Must be called after `with_base_address` and before
+    /// the layout phase reads `section_info.location`.
+    pub(crate) fn apply_section_start_overrides(&mut self, args: &P::Args) {
+        for (section_id, name) in [
+            (TEXT, SectionName(b".text")),
+            (DATA, SectionName(b".data")),
+            (BSS, SectionName(b".bss")),
+        ] {
+            if let Some(address) = args.start_address_for_section(name) {
+                self.section_infos.get_mut(section_id).location =
+                    Some(linker_script::Location { address });
+            }
+        }
+    }
+
     pub(crate) fn add_named_section(
         &mut self,
         name: SectionName<'data>,

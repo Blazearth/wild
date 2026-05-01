@@ -89,6 +89,12 @@ pub struct ElfArgs {
     /// Section start addresses from `--section-start` options. Maps section name to address.
     pub(crate) section_start: HashMap<Vec<u8>, u64>,
 
+    /// Segment start address overrides from `-Ttext`, `-Tdata`, `-Tbss`.
+    /// Used to implement `SEGMENT_START("name", default)` per GNU ld behaviour.
+    pub(crate) ttext: Option<u64>,
+    pub(crate) tdata: Option<u64>,
+    pub(crate) tbss: Option<u64>,
+
     /// If set, GC stats will be written to the specified filename.
     pub(crate) write_gc_stats: Option<PathBuf>,
 
@@ -290,6 +296,9 @@ impl Default for ElfArgs {
             export_list_path: None,
             defsym: Vec::new(),
             section_start: HashMap::new(),
+            ttext: None,
+            tdata: None,
+            tbss: None,
             got_plt_syms: false,
             relax: true,
             hash_style: HashStyle::Both,
@@ -1280,6 +1289,32 @@ fn setup_argument_parser() -> ArgumentParser<ElfArgs> {
         .prefix("T")
         .help("Use linker script")
         .execute(|args, _modifier_stack, value| {
+            // -Ttext=ADDR, -Tdata=ADDR, -Tbss=ADDR are segment start overrides,
+            // not linker script paths. Handle them here since they share the -T prefix.
+            // The prefix handler gives us the part after "-T", which may be:
+            //   "text=0x700000"  (from -Ttext=0x700000)
+            // We only handle the "name=ADDR" form here.
+            if let Some(addr) = value.strip_prefix("text=") {
+                args.ttext = Some(
+                    parse_number(addr)
+                        .with_context(|| format!("Invalid address `{addr}` in -Ttext"))?,
+                );
+                return Ok(());
+            }
+            if let Some(addr) = value.strip_prefix("data=") {
+                args.tdata = Some(
+                    parse_number(addr)
+                        .with_context(|| format!("Invalid address `{addr}` in -Tdata"))?,
+                );
+                return Ok(());
+            }
+            if let Some(addr) = value.strip_prefix("bss=") {
+                args.tbss = Some(
+                    parse_number(addr)
+                        .with_context(|| format!("Invalid address `{addr}` in -Tbss"))?,
+                );
+                return Ok(());
+            }
             args.common_mut().save_dir.handle_file(value);
             args.common_mut().add_script(value);
             Ok(())
@@ -1873,7 +1908,16 @@ impl platform::Args for ElfArgs {
     }
 
     fn start_address_for_section(&self, section_name: SectionName) -> Option<u64> {
-        self.section_start.get(section_name.bytes()).copied()
+        // --section-start takes precedence over -Ttext/-Tdata/-Tbss.
+        if let Some(&addr) = self.section_start.get(section_name.bytes()) {
+            return Some(addr);
+        }
+        match section_name.bytes() {
+            b".text" => self.ttext,
+            b".data" => self.tdata,
+            b".bss" => self.tbss,
+            _ => None,
+        }
     }
 
     fn version_script_path(&self) -> Option<&Path> {
@@ -2295,5 +2339,98 @@ mod tests {
         for flag in SILENTLY_IGNORED_FLAGS {
             assert!(!flag.starts_with('-'));
         }
+    }
+
+    // Helper: parse a small set of args and return the resulting ElfArgs.
+    fn parse_args<'a>(args: impl IntoIterator<Item = &'a str>) -> ElfArgs {
+        let mut elf_args = ElfArgs::new().unwrap();
+        elf_args.parse(args.into_iter()).unwrap();
+        elf_args
+    }
+
+    // Helper: parse args and expect a parse error.
+    fn parse_args_err<'a>(args: impl IntoIterator<Item = &'a str>) -> crate::error::Error {
+        let mut elf_args = ElfArgs::new().unwrap();
+        elf_args.parse(args.into_iter()).unwrap_err()
+    }
+
+    #[test]
+    fn test_ttext_hex_round_trip() {
+        use crate::output_section_id::SectionName;
+        let args = parse_args(["-Ttext=0x700000"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".text")),
+            Some(0x700000)
+        );
+    }
+
+    #[test]
+    fn test_ttext_decimal_round_trip() {
+        use crate::output_section_id::SectionName;
+        // 7340032 == 0x700000
+        let args = parse_args(["-Ttext=7340032"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".text")),
+            Some(0x700000)
+        );
+    }
+
+    #[test]
+    fn test_tdata_hex_round_trip() {
+        use crate::output_section_id::SectionName;
+        let args = parse_args(["-Tdata=0x800000"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".data")),
+            Some(0x800000)
+        );
+    }
+
+    #[test]
+    fn test_tdata_decimal_round_trip() {
+        use crate::output_section_id::SectionName;
+        // 8388608 == 0x800000
+        let args = parse_args(["-Tdata=8388608"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".data")),
+            Some(0x800000)
+        );
+    }
+
+    #[test]
+    fn test_tbss_hex_round_trip() {
+        use crate::output_section_id::SectionName;
+        let args = parse_args(["-Tbss=0x900000"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".bss")),
+            Some(0x900000)
+        );
+    }
+
+    #[test]
+    fn test_tbss_decimal_round_trip() {
+        use crate::output_section_id::SectionName;
+        // 9437184 == 0x900000
+        let args = parse_args(["-Tbss=9437184"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".bss")),
+            Some(0x900000)
+        );
+    }
+
+    #[test]
+    fn test_ttext_invalid_address() {
+        // Parsing a non-numeric address should return an error.
+        parse_args_err(["-Ttext=notanumber"]);
+    }
+
+    #[test]
+    fn test_section_start_takes_precedence_over_ttext() {
+        use crate::output_section_id::SectionName;
+        // --section-start=.text=0x600000 should win over -Ttext=0x700000
+        let args = parse_args(["--section-start=.text=0x600000", "-Ttext=0x700000"]);
+        assert_eq!(
+            args.start_address_for_section(SectionName(b".text")),
+            Some(0x600000)
+        );
     }
 }
