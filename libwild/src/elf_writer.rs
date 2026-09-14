@@ -1954,7 +1954,7 @@ fn write_object<'data, C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
             // Dynamic symbols that we define are handled by the epilogue so that they can be
             // written in the correct order. Here, we only need to handle weak symbols that we
             // reference that aren't defined by any shared objects we're linking against.
-            if res.flags.is_dynamic() {
+            if res.flags.is_dynamic() && !layout.args().only_keep_debug() {
                 let symbol = object
                     .object
                     .symbol(object.symbol_id_range.id_to_input(symbol_id))?;
@@ -2034,12 +2034,14 @@ fn write_thunks<'data, C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
 
         let target_address = res.plt_address().unwrap_or(res.raw_value);
 
-        let buf = buffers.get_mut(primary_part_id);
-        let thunk_buf = buf
-            .split_off_mut(..thunk_size)
-            .ok_or_else(|| crate::file_writer::insufficient_allocation("thunk space in .text"))?;
+        if !layout.args().only_keep_debug() {
+            let buf = buffers.get_mut(primary_part_id);
+            let thunk_buf = buf.split_off_mut(..thunk_size).ok_or_else(|| {
+                crate::file_writer::insufficient_allocation("thunk space in .text")
+            })?;
 
-        A::write_thunk(thunk_address, target_address, thunk_buf);
+            A::write_thunk(thunk_address, target_address, thunk_buf);
+        }
 
         if emit_symbols {
             let orig_name = layout
@@ -2331,9 +2333,10 @@ fn write_object_section<'data, C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
     // For --only-keep-debug, alloc non-NOTE sections are NOBITS.
     if layout.args().only_keep_debug() {
         use crate::platform::SectionAttributes as _;
-        let section_info = layout
+        let primary_id = layout
             .output_sections
-            .output_info(part_id.output_section_id::<elf::Elf<C>>());
+            .primary_output_section(part_id.output_section_id::<elf::Elf<C>>());
+        let section_info = layout.output_sections.output_info(primary_id);
         let attrs = &section_info.section_attributes;
         if attrs.is_alloc() && attrs.ty != linker_utils::elf::sht::NOTE {
             return Ok(());
@@ -4204,7 +4207,10 @@ fn write_prelude_except_gdb_index<'data, C: ElfClass, A: Arch<Platform = elf::El
 
     write_section_headers(table_writer, layout)?;
 
-    write_plt_got_entries::<C, A>(prelude, layout, table_writer)?;
+    // Skip PLT/GOT writes in --only-keep-debug since alloc sections are NOBITS.
+    if !layout.args().only_keep_debug() {
+        write_plt_got_entries::<C, A>(prelude, layout, table_writer)?;
+    }
 
     if !layout.args().should_strip_all() {
         write_symbol_table_entries(prelude, &mut table_writer.debug_symbol_writer, layout)?;
@@ -4223,18 +4229,20 @@ fn write_prelude_except_gdb_index<'data, C: ElfClass, A: Arch<Platform = elf::El
 
     write_merged_strings(prelude, buffers, layout);
 
-    write_interp(prelude, buffers);
+    if !layout.args().only_keep_debug() {
+        write_interp(prelude, buffers);
+    }
 
     // If we're emitting symbol versions, we should have only one - symbol 0 - the undefined
     // symbol. It needs to be set as local.
-    if layout.gnu_version_enabled() {
+    if layout.gnu_version_enabled() && !layout.args().only_keep_debug() {
         table_writer
             .version_writer
             .set_next_symbol_version(object::elf::VER_NDX_GLOBAL)?;
     }
 
     // Define the null dynamic symbol.
-    if layout.symbol_db.output_kind.needs_dynsym() {
+    if layout.symbol_db.output_kind.needs_dynsym() && !layout.args().only_keep_debug() {
         table_writer.dynsym_writer.undefined_symbol(false, &[])?;
     }
 
@@ -4257,8 +4265,14 @@ fn write_merged_strings<C: ElfClass>(
     buffers: &mut OutputSectionPartMap<&mut [u8]>,
     layout: &ElfLayout<C>,
 ) {
+    let only_keep_debug = layout.args().only_keep_debug();
     layout.merged_strings.for_each(|section_id, merged| {
         if merged.len() > 0 {
+            // Allocatable merged strings (e.g. .rodata.str1.1) are NOBITS in --only-keep-debug.
+            let primary_id = layout.output_sections.primary_output_section(section_id);
+            if only_keep_debug && layout.output_sections.section_flags(primary_id).is_alloc() {
+                return;
+            }
             let buffer = buffers
                 .get_mut(section_id.part_id_with_alignment::<elf::Elf<C>>(crate::alignment::MIN));
 
@@ -4602,24 +4616,28 @@ fn write_epilogue<C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
 ) -> Result {
     verbose_timing_phase!("Write epilogue");
 
+    let only_keep_debug = layout.args().only_keep_debug();
     let mut epilogue_offsets = EpilogueOffsets::default();
 
-    if layout.symbol_db.output_kind.needs_dynamic() {
+    // Dynamic linking sections are NOBITS in --only-keep-debug.
+    if layout.symbol_db.output_kind.needs_dynamic() && !only_keep_debug {
         write_epilogue_dynamic_entries(layout, table_writer, &mut epilogue_offsets)?;
     }
 
     let got_relr_n = layout.got_relr_n;
-    if got_relr_n > 0 {
+    if got_relr_n > 0 && !only_keep_debug {
         let got_relr_base = layout
             .section_part_layouts
             .get(part_id::GOT_RELR)
             .mem_offset;
         table_writer.write_got_relr_bitmap(got_relr_n, got_relr_base)?;
     }
-    write_sysv_hash_table(layout, epilogue, buffers)?;
-    write_gnu_hash_tables(layout, epilogue, buffers)?;
+    if !only_keep_debug {
+        write_sysv_hash_table(layout, epilogue, buffers)?;
+        write_gnu_hash_tables(layout, epilogue, buffers)?;
 
-    write_dynamic_symbol_definitions(table_writer, layout)?;
+        write_dynamic_symbol_definitions(table_writer, layout)?;
+    }
 
     if !layout.format_specific.gnu_property_notes.is_empty() {
         write_gnu_property_notes(layout, buffers)?;
@@ -4628,7 +4646,9 @@ fn write_epilogue<C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
         write_riscv_attributes(layout, buffers)?;
     }
 
-    if let Some(verdefs) = &epilogue.format_specific.verdefs {
+    if let Some(verdefs) = &epilogue.format_specific.verdefs
+        && !only_keep_debug
+    {
         write_verdef(
             verdefs,
             table_writer,
@@ -4636,7 +4656,7 @@ fn write_epilogue<C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
             &epilogue_offsets,
         )?;
     }
-    if epilogue.format_specific.needs_eh_frame_terminator && !layout.args().only_keep_debug() {
+    if epilogue.format_specific.needs_eh_frame_terminator && !only_keep_debug {
         table_writer.write_eh_frame_terminator();
     }
 
@@ -6353,6 +6373,11 @@ fn write_dynamic_file<'data, C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
     layout: &ElfLayout<'data, C>,
 ) -> Result {
     verbose_timing_phase!("Write dynamic");
+
+    // Dynamic linking sections are NOBITS in --only-keep-debug.
+    if layout.args().only_keep_debug() {
+        return Ok(());
+    }
 
     write_so_name(object, table_writer)?;
 

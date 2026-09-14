@@ -36,10 +36,11 @@ fn zero_alloc_section_sizes<C: ElfClass>(layout: &mut Layout<elf::Elf<C>>) {
         if header_ids.contains(&section_id) {
             continue;
         }
-        let flags = layout.output_sections.section_flags(section_id);
+        let primary_id = layout.output_sections.primary_output_section(section_id);
+        let flags = layout.output_sections.section_flags(primary_id);
         let section_type = layout
             .output_sections
-            .output_info(section_id)
+            .output_info(primary_id)
             .section_attributes
             .ty;
 
@@ -58,6 +59,6 @@ fn zero_alloc_section_sizes<C: ElfClass>(layout: &mut Layout<elf::Elf<C>>) {
         }
 
         layout.section_layouts.get_mut(section_id).file_size = 0;
-        layout.merged_section_layouts.get_mut(section_id).file_size = 0;
+        layout.merged_section_layouts.get_mut(primary_id).file_size = 0;
     }
 }

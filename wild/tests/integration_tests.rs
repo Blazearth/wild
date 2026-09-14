@@ -2782,7 +2782,13 @@ fn process_directive(
         "DiffEnabled" => config.should_diff = arg.parse()?,
         "DiffMatchAny" => config.diff_match_any = arg.parse()?,
         "RunEnabled" => config.should_run = arg.parse()?,
-        "RunDynSym" => config.run_dyn_sym = Some(arg.to_string()),
+        "RunDynSym" => {
+            config.run_dyn_sym = if arg.is_empty() {
+                None
+            } else {
+                Some(arg.to_string())
+            }
+        }
         "ReferenceLinkers" => {
             let refs: Vec<String> = arg
                 .split(',')
@@ -3182,14 +3188,17 @@ impl ProgramInputs {
         // --only-keep-debug.
         let mut ref_config = config.clone();
         ref_config.config_name = format!("{}-reference", config.config_name);
-        ref_config
-            .linker_args
-            .args
-            .retain(|a| a != "--only-keep-debug");
-        ref_config
-            .linker_args
-            .args
-            .push("--strip-debug".to_string());
+        let replace_flag = |args: &mut Vec<String>| {
+            for a in args.iter_mut() {
+                match a.as_str() {
+                    "--only-keep-debug" => *a = "--strip-debug".to_string(),
+                    "-Wl,--only-keep-debug" => *a = "-Wl,--strip-debug".to_string(),
+                    _ => {}
+                }
+            }
+        };
+        replace_flag(&mut ref_config.linker_args.args);
+        replace_flag(&mut ref_config.wild_extra_linker_args.args);
         ref_config.test_only_keep_debug = false;
 
         // Create the build directory for the reference config.
@@ -5586,6 +5595,12 @@ impl Assertions {
             return Ok(());
         };
 
+        if let object::SectionFlags::Elf { sh_type, .. } = section.flags()
+            && sh_type == object::elf::SHT_NOBITS
+        {
+            return Ok(());
+        }
+
         let data = section.data()?;
         let mut reader = gimli::EndianSlice::new(data, gimli::LittleEndian);
         while !reader.is_empty() {
@@ -5804,7 +5819,7 @@ impl Assertions {
         // table.
         if self.expect_dynamic {
             ensure!(
-                obj.dynamic_symbol_table().is_some(),
+                obj.dynamic_symbol_table().is_some() || obj.section_by_name(".dynsym").is_some(),
                 "Expected a dynamic symbol table"
             );
         }
