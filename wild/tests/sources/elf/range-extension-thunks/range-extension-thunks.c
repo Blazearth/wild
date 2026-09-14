@@ -8,6 +8,7 @@
 // MiB of padding on either side. That way it doesn't matter which side the PLT is placed on, we'll
 // need a thunk to branch to it.
 
+//#AbstractConfig:default
 //#LinkerDriver:gcc
 //#Object:ifunc1.c
 //#Object:padding1.c
@@ -33,6 +34,14 @@
 //#CompArgs:-fPIC
 //#LinkArgs:-shared -znow
 //#RunDynSym:entry
+
+//#Config:thunks:default
+
+//#Config:only-keep-debug:default
+//#LinkArgs:-shared -znow --only-keep-debug
+//#RunEnabled:false
+//#DiffEnabled:false
+//#TestOnlyKeepDebug:true
 
 int foo1(void);
 int foo2(void);

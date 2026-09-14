@@ -5365,6 +5365,12 @@ impl Assertions {
             return Ok(());
         };
 
+        if let object::SectionFlags::Elf { sh_type, .. } = section.flags()
+            && sh_type == object::elf::SHT_NOBITS
+        {
+            return Ok(());
+        }
+
         let data = section.data()?;
         let mut reader = gimli::EndianSlice::new(data, gimli::LittleEndian);
         while !reader.is_empty() {
@@ -5583,7 +5589,7 @@ impl Assertions {
         // table.
         if self.expect_dynamic {
             ensure!(
-                obj.dynamic_symbol_table().is_some(),
+                obj.dynamic_symbol_table().is_some() || obj.section_by_name(".dynsym").is_some(),
                 "Expected a dynamic symbol table"
             );
         }
