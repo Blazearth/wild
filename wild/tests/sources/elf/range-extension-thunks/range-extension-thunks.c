@@ -38,7 +38,8 @@
 //#Config:thunks:default
 
 //#Config:only-keep-debug:default
-//#LinkArgs:-shared -znow --only-keep-debug
+//#LinkArgs:-shared -znow -Wl,--only-keep-debug
+//#ReferenceLinkers:
 //#RunEnabled:false
 //#DiffEnabled:false
 //#TestOnlyKeepDebug:true

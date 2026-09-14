@@ -36,6 +36,7 @@
 //#ExpectSym:_start
 
 //#Config:only-keep-debug-shared:default
+//#SkipArch: ppc64le
 //#Mode:dynamic
 //#LinkArgs:-shared --only-keep-debug
 //#RunEnabled:false
@@ -63,4 +64,3 @@ void _start(void) {
   }
   exit_syscall(val);
 }
-

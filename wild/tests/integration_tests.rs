@@ -2974,14 +2974,13 @@ impl ProgramInputs {
         // --only-keep-debug.
         let mut ref_config = config.clone();
         ref_config.config_name = format!("{}-reference", config.config_name);
-        ref_config
-            .linker_args
-            .args
-            .retain(|a| a != "--only-keep-debug");
-        ref_config
-            .linker_args
-            .args
-            .push("--strip-debug".to_string());
+        for a in &mut ref_config.linker_args.args {
+            match a.as_str() {
+                "--only-keep-debug" => *a = "--strip-debug".to_string(),
+                "-Wl,--only-keep-debug" => *a = "-Wl,--strip-debug".to_string(),
+                _ => {}
+            }
+        }
         ref_config.test_only_keep_debug = false;
 
         // Create the build directory for the reference config.
