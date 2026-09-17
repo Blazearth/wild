@@ -44,6 +44,29 @@
 //#TestOnlyKeepDebug:true
 //#ExpectSym:_start
 
+//#Config:only-keep-debug-copy-relocations:only-keep-debug-dynamic
+//#Arch:x86_64,aarch64,riscv64
+//#CompArgs:-g -fno-pic -fno-pie -DCOPY_RELOCATION
+//#CompSoArgs:-fPIC
+//#LinkArgs:-z now
+//#WildExtraLinkArgs:--only-keep-debug
+//#SoSingleLinker:lld
+//#ExpectSym:shared_data section=".bss"
+
+//#Config:only-keep-debug-got-plt-syms:only-keep-debug-dynamic
+//#SkipArch:ppc64le
+//#LinkArgs:-z now
+//#WildExtraLinkArgs:--only-keep-debug --got-plt-syms
+//#SoSingleLinker:lld
+//#ExpectSym:shared_func$got
+
+//#Config:only-keep-debug-android-relr:only-keep-debug
+//#LinkArgs:--only-keep-debug -pie --pack-dyn-relocs=relr --use-android-relr-tags
+//#ExpectSection:.relr.dyn type=8
+
+//#Config:only-keep-debug-static:only-keep-debug
+//#LinkArgs:-static --only-keep-debug
+
 #include "../common/runtime.h"
 
 int global_var = 42;
@@ -53,9 +76,16 @@ const char* msg2 = "non-debug merged string";
 
 __attribute__((weak)) int shared_func(int x);
 
+#ifdef COPY_RELOCATION
+extern int shared_data;
+#endif
+
 void _start(void) {
   runtime_init();
   int val = global_var;
+#ifdef COPY_RELOCATION
+  val += shared_data;
+#endif
   if (shared_func) {
     val = shared_func(val);
   }
