@@ -789,7 +789,8 @@ impl<C: ElfClass> platform::Platform for Elf<C> {
     fn maybe_only_keep_debug<'data, A: Arch<Platform = Self>>(
         layout: &mut layout::Layout<'data, Self>,
     ) -> Result {
-        crate::only_keep_debug::maybe_only_keep_debug_elf::<C, A>(layout)
+        crate::only_keep_debug::maybe_only_keep_debug_elf::<C>(layout);
+        Ok(())
     }
 
     fn maybe_init_linker_plugin<'data>(

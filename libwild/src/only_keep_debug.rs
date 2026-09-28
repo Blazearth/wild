@@ -4,25 +4,18 @@
 use crate::compression::recalculate_file_offsets;
 use crate::elf;
 use crate::elf::ElfClass;
-use crate::error::Result;
 use crate::layout::Layout;
-use crate::platform::Arch;
-use crate::platform::Args as _;
 use crate::platform::SectionFlags as _;
 use crate::timing_phase;
 use linker_utils::elf::sht;
 
-#[allow(clippy::unnecessary_wraps)]
-pub(crate) fn maybe_only_keep_debug_elf<C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
-    layout: &mut Layout<elf::Elf<C>>,
-) -> Result {
+pub(crate) fn maybe_only_keep_debug_elf<C: ElfClass>(layout: &mut Layout<elf::Elf<C>>) {
     if !layout.args().only_keep_debug() {
-        return Ok(());
+        return;
     }
     timing_phase!("Only-keep-debug: zero alloc sections");
     zero_alloc_section_sizes(layout);
     recalculate_file_offsets(layout);
-    Ok(())
 }
 
 fn zero_alloc_section_sizes<C: ElfClass>(layout: &mut Layout<elf::Elf<C>>) {

@@ -539,6 +539,10 @@ impl ElfArgs {
             Architecture::Unsupported => Emulation::Unsupported,
         });
     }
+
+    pub(crate) fn only_keep_debug(&self) -> bool {
+        !self.should_output_partial_object() && matches!(self.strip, Strip::OnlyKeepDebug)
+    }
 }
 
 // Parse the supplied input arguments, which should not include the program name.
@@ -2150,10 +2154,6 @@ impl platform::Args for ElfArgs {
 
     fn should_strip_all(&self) -> bool {
         !self.should_output_partial_object() && matches!(self.strip, Strip::All)
-    }
-
-    fn only_keep_debug(&self) -> bool {
-        !self.should_output_partial_object() && matches!(self.strip, Strip::OnlyKeepDebug)
     }
 
     fn should_strip_symbol_named(&self, name: &[u8]) -> bool {

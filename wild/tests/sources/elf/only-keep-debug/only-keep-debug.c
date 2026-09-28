@@ -29,7 +29,8 @@
 //#Config:only-keep-debug-dynamic:default
 //#Mode:dynamic
 //#Shared:shared.c
-//#LinkArgs:--only-keep-debug -z now
+//#LinkArgs:-z now
+//#WildExtraLinkArgs:--only-keep-debug
 //#RunEnabled:false
 //#DiffEnabled:false
 //#TestOnlyKeepDebug:true
@@ -49,7 +50,6 @@
 //#CompArgs:-g -fno-pic -fno-pie -DCOPY_RELOCATION
 //#CompSoArgs:-fPIC
 //#LinkArgs:-z now
-//#WildExtraLinkArgs:--only-keep-debug
 //#SoSingleLinker:lld
 //#ExpectSym:shared_data section=".bss"
 
@@ -59,6 +59,12 @@
 //#WildExtraLinkArgs:--only-keep-debug --got-plt-syms
 //#SoSingleLinker:lld
 //#ExpectSym:shared_func$got
+
+//#Config:only-keep-debug-prelude-got-syms:only-keep-debug
+//#Arch:x86_64
+//#CompArgs:-g -fPIC -DPRELUDE_GOT
+//#LinkArgs:--only-keep-debug --got-plt-syms --no-relax
+//#ExpectSym:__ehdr_start$got section=".got"
 
 //#Config:only-keep-debug-android-relr:only-keep-debug
 //#LinkArgs:--only-keep-debug -pie --pack-dyn-relocs=relr --use-android-relr-tags
@@ -80,11 +86,18 @@ __attribute__((weak)) int shared_func(int x);
 extern int shared_data;
 #endif
 
+#ifdef PRELUDE_GOT
+extern const unsigned char __ehdr_start;
+#endif
+
 void _start(void) {
   runtime_init();
   int val = global_var;
 #ifdef COPY_RELOCATION
   val += shared_data;
+#endif
+#ifdef PRELUDE_GOT
+  val += __ehdr_start;
 #endif
   if (shared_func) {
     val = shared_func(val);

@@ -580,7 +580,7 @@ pub(crate) fn recalculate_file_offsets<P: Platform>(layout: &mut Layout<P>) {
     }
 }
 
-pub(crate) fn update_file_offset<P: Platform>(layout: &mut Layout<P>) -> Result {
+fn update_file_offset<P: Platform>(layout: &mut Layout<P>) -> Result {
     timing_phase!("Update file offsets post-compression");
 
     // Recalculate file offsets since we changed file_sizes

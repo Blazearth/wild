@@ -5,7 +5,6 @@ use crate::elf::ElfClass;
 use crate::error::Context as _;
 use crate::error::Result;
 use crate::layout::Layout;
-use crate::platform::Args as _;
 use crate::platform::ObjectFile as _;
 use crate::platform::Platform;
 use linker_utils::elf::secnames::GOT_SECTION_NAME_STR;

@@ -4216,6 +4216,13 @@ fn write_prelude_except_gdb_index<'data, C: ElfClass, A: Arch<Platform = elf::El
         write_symbol_table_entries(prelude, &mut table_writer.debug_symbol_writer, layout)?;
     }
 
+    // GOT/PLT section content is NOBITS under --only-keep-debug, but $got/$plt debug symbols
+    // still need to be written to .symtab/.strtab. This must happen after
+    // write_symbol_table_entries so the null symbol at index 0 is written first.
+    if layout.args().only_keep_debug() && layout.symbol_db.args.got_plt_syms {
+        write_internal_got_plt_symbols(&prelude.internal_symbols, table_writer, layout)?;
+    }
+
     if layout.args().should_write_eh_frame_hdr
         && !layout.args().only_keep_debug()
         && layout
@@ -6359,10 +6366,23 @@ fn write_internal_symbols_plt_got_entries<'data, C: ElfClass, A: Arch<Platform =
                     format!("Failed to process `{}`", layout.symbol_debug(symbol_id))
                 })?;
         }
+    }
+    if layout.symbol_db.args.got_plt_syms {
+        write_internal_got_plt_symbols(internal_symbols, table_writer, layout)?;
+    }
+    Ok(())
+}
 
-        if layout.symbol_db.args.got_plt_syms {
-            write_got_plt_syms(layout, &mut table_writer.debug_symbol_writer, symbol_id)?;
-        }
+/// Writes `$got` and `$plt` synthetic debug symbols to `.symtab`/`.strtab` for internal symbols,
+/// without writing any GOT/PLT section content.
+fn write_internal_got_plt_symbols<C: ElfClass>(
+    internal_symbols: &InternalSymbols<elf::Elf<C>>,
+    table_writer: &mut TableWriter<'_, '_, C>,
+    layout: &ElfLayout<C>,
+) -> Result {
+    for i in 0..internal_symbols.symbol_definitions.len() {
+        let symbol_id = internal_symbols.start_symbol_id.add_usize(i);
+        write_got_plt_syms(layout, &mut table_writer.debug_symbol_writer, symbol_id)?;
     }
     Ok(())
 }
@@ -6429,13 +6449,9 @@ fn write_dynamic_file<'data, C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
                 }
             }
 
-            if !only_keep_debug {
-                table_writer
-                    .process_resolution::<A>(Some(layout), layout.args(), res)
-                    .with_context(|| {
-                        format!("Failed to write {}", layout.symbol_debug(symbol_id))
-                    })?;
-            }
+            table_writer
+                .process_resolution::<A>(Some(layout), layout.args(), res)
+                .with_context(|| format!("Failed to write {}", layout.symbol_debug(symbol_id)))?;
         }
     }
 

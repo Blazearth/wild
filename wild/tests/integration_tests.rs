@@ -225,12 +225,10 @@
 //! Verify that the hard linked alias isn't changed and the output is replaced.
 //!
 //! TestOnlyKeepDebug:{bool} Whether to perform additional testing of the --only-keep-debug flag.
-//! When true, re-links the same inputs without --only-keep-debug and compares the two outputs:
-//! symbol addresses and section addresses must match, allocatable non-NOTE sections must be
-//! SHT_NOBITS, debug sections must exist and be non-empty, .symtab must exist, and the debug output
-//! must be smaller than the normal output. The reference link is unstripped (identical arguments
-//! minus --only-keep-debug) so that section GC and final layout are preserved identically when
-//! validating --only-keep-debug.
+//! When true, re-links the same inputs with --strip-debug instead of --only-keep-debug and
+//! compares the two outputs: symbol addresses and section addresses must match, allocatable
+//! non-NOTE sections must be SHT_NOBITS, debug sections must exist and be non-empty, .symtab must
+//! exist, and build IDs (if present) must match.
 //!
 //! TestRelinkAfterRun:{bool} Run Wild's output, relink it at the same path, then run it again.
 //! Verifies that relinking replaces the output file rather than updating its inode in place.
