@@ -27,6 +27,7 @@
 //#ExpectSym:_start
 
 //#Config:only-keep-debug-dynamic:default
+//#SkipArch: ppc64le
 //#Mode:dynamic
 //#Shared:shared.c
 //#LinkArgs:-z now

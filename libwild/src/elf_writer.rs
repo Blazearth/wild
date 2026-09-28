@@ -6057,6 +6057,7 @@ fn write_section_headers<C: ElfClass>(
         let sh_type = if layout.args().only_keep_debug()
             && output_sections.section_flags(section_id).is_alloc()
             && section_type != sht::NOTE
+            && section_type != sht::NULL
         {
             sht::NOBITS
         } else if layout.args().use_android_relr_tags && section_type == sht::RELR {
