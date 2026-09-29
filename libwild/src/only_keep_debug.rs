@@ -7,7 +7,17 @@ use crate::elf::ElfClass;
 use crate::layout::Layout;
 use crate::platform::SectionFlags as _;
 use crate::timing_phase;
+use linker_utils::elf::SectionType;
 use linker_utils::elf::sht;
+
+/// Returns whether this section should be hollowed (file_size zeroed, sh_type set to SHT_NOBITS)
+/// under `--only-keep-debug`. Allocatable sections are hollowed except for SHT_NULL and SHT_NOTE.
+///
+/// This predicate is shared between `zero_alloc_section_sizes` (post-layout file size zeroing),
+/// section content writing, and section header emission to keep them in sync.
+pub(crate) fn should_hollow_section(is_alloc: bool, section_type: SectionType) -> bool {
+    is_alloc && section_type != sht::NULL && section_type != sht::NOTE
+}
 
 pub(crate) fn maybe_only_keep_debug_elf<C: ElfClass>(layout: &mut Layout<elf::Elf<C>>) {
     if !layout.args().only_keep_debug() {
@@ -37,7 +47,7 @@ fn zero_alloc_section_sizes<C: ElfClass>(layout: &mut Layout<elf::Elf<C>>) {
             .section_attributes
             .ty;
 
-        if !flags.is_alloc() || section_type == sht::NOTE {
+        if !should_hollow_section(flags.is_alloc(), section_type) {
             continue;
         }
 

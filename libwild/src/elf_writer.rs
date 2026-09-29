@@ -2332,13 +2332,12 @@ fn write_object_section<'data, C: ElfClass, A: Arch<Platform = elf::Elf<C>>>(
 
     // For --only-keep-debug, alloc non-NOTE sections are NOBITS.
     if layout.args().only_keep_debug() {
-        use crate::platform::SectionAttributes as _;
         let primary_id = layout
             .output_sections
             .primary_output_section(part_id.output_section_id::<elf::Elf<C>>());
         let section_info = layout.output_sections.output_info(primary_id);
         let attrs = &section_info.section_attributes;
-        if attrs.is_alloc() && attrs.ty != linker_utils::elf::sht::NOTE {
+        if crate::only_keep_debug::should_hollow_section(attrs.flags.is_alloc(), attrs.ty) {
             return Ok(());
         }
     }
@@ -4275,9 +4274,17 @@ fn write_merged_strings<C: ElfClass>(
     let only_keep_debug = layout.args().only_keep_debug();
     layout.merged_strings.for_each(|section_id, merged| {
         if merged.len() > 0 {
-            // Allocatable merged strings (e.g. .rodata.str1.1) are NOBITS in --only-keep-debug.
             let primary_id = layout.output_sections.primary_output_section(section_id);
-            if only_keep_debug && layout.output_sections.section_flags(primary_id).is_alloc() {
+            if only_keep_debug
+                && crate::only_keep_debug::should_hollow_section(
+                    layout.output_sections.section_flags(primary_id).is_alloc(),
+                    layout
+                        .output_sections
+                        .output_info(primary_id)
+                        .section_attributes
+                        .ty,
+                )
+            {
                 return;
             }
             let buffer = buffers
@@ -6055,10 +6062,10 @@ fn write_section_headers<C: ElfClass>(
         entry.set_name(name_offset);
 
         let sh_type = if layout.args().only_keep_debug()
-            && output_sections.section_flags(section_id).is_alloc()
-            && section_type != sht::NOTE
-            && section_type != sht::NULL
-        {
+            && crate::only_keep_debug::should_hollow_section(
+                output_sections.section_flags(section_id).is_alloc(),
+                section_type,
+            ) {
             sht::NOBITS
         } else if layout.args().use_android_relr_tags && section_type == sht::RELR {
             object::elf::SHT_ANDROID_RELR
