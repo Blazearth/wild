@@ -493,9 +493,9 @@ fn process_linker_script<'data, I: InputFileData>(
     script.foreach_input(input_file.modifiers, |mut input| {
         input.search_first = Some(directory.to_owned());
 
-        if let (Some(sysroot), InputSpec::File(file)) = (args.sysroot(), &mut input.spec)
+        if let InputSpec::File(file) = &mut input.spec
             && let Some(new_file) =
-                crate::linker_script::maybe_apply_sysroot(&script_path, file, sysroot)
+                crate::linker_script::maybe_apply_sysroot(&script_path, file, args.sysroot())
         {
             *file = new_file;
         }

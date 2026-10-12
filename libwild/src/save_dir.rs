@@ -280,15 +280,30 @@ impl SaveDirState {
                     dir = args.next().map_or_default(|s| s.as_str());
                 }
 
-                let dir = parsed_args
-                    .sysroot()
-                    .and_then(|sysroot| {
-                        crate::linker_script::maybe_forced_sysroot(Path::new(dir), sysroot)
-                    })
-                    .unwrap_or_else(|| Box::from(Path::new(dir)));
+                let dir = crate::linker_script::maybe_forced_sysroot(
+                    Path::new(dir),
+                    parsed_args.sysroot(),
+                )
+                .unwrap_or_else(|| Box::from(Path::new(dir)));
                 let dir = std::path::absolute(dir)?;
                 out.write_all(b"-L")?;
                 write_copied_file_arg(out, &dir)?;
+            } else if let Some(forced_path) =
+                crate::linker_script::maybe_forced_sysroot(Path::new(arg), parsed_args.sysroot())
+            {
+                let path = std::path::absolute(&forced_path)?;
+                if self.output_path(&path).exists() {
+                    write_copied_file_arg(out, &path)?;
+                } else if is_rsp_file {
+                    out.write_all(arg.as_bytes())?;
+                } else {
+                    for b in arg.bytes() {
+                        if b" $\\".contains(&b) {
+                            out.write_all(b"\\")?;
+                        }
+                        out.write_all(&[b])?;
+                    }
+                }
             } else {
                 // If the arg contains '=', then check to see if what's after the '=' is a filename
                 // that exists. If it does, use that.

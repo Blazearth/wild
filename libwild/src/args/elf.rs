@@ -556,11 +556,17 @@ pub(crate) fn parse<S: AsRef<str>, I: Iterator<Item = S>>(
         arg_parser.handle_argument(args, &mut modifier_stack, arg, &mut input)?;
     }
 
-    if let Some(sysroot) = &args.sysroot {
-        for path in &mut args.lib_search_path {
-            if let Some(new_path) = maybe_forced_sysroot(path, sysroot) {
-                *path = new_path;
-            }
+    for path in &mut args.lib_search_path {
+        if let Some(new_path) = maybe_forced_sysroot(path, args.sysroot.as_deref()) {
+            *path = new_path;
+        }
+    }
+
+    for input in &mut args.common.inputs {
+        if let InputSpec::File(path) = &mut input.spec
+            && let Some(new_path) = maybe_forced_sysroot(path, args.sysroot.as_deref())
+        {
+            *path = new_path;
         }
     }
 
