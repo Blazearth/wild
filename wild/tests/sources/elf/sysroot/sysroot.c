@@ -52,7 +52,19 @@
 //#LinkArgs:--sysroot=$OUT_DIR/last
 //#AugmentLinkerScript:script-equals.ld
 
+//#Config:save-script-forced-equals:script-base
+//#ReferenceLinkers:
+//#DriverMode:save-dir-response
+//#LinkArgs:--sysroot=$OUT_DIR/last
+//#AugmentLinkerScript:script-equals.ld
+
 //#Config:script-forced-sysroot-var:script-base
+//#LinkArgs:--sysroot=$OUT_DIR/last
+//#AugmentLinkerScript:script-sysroot-var.ld
+
+//#Config:save-script-forced-sysroot-var:script-base
+//#ReferenceLinkers:
+//#DriverMode:save-dir-response
 //#LinkArgs:--sysroot=$OUT_DIR/last
 //#AugmentLinkerScript:script-sysroot-var.ld
 
@@ -77,6 +89,24 @@
 //#ReferenceLinkers:
 //#DriverMode:save-dir-response
 //#PostLinkArgs:=$OUT_DIR/last/lib/libvalue.a
+
+//#Config:script-forced-equals-no-sysroot:script-base
+//#ReferenceLinkers:
+//#AugmentLinkerScript:script-equals-no-sysroot.ld
+
+//#Config:save-script-forced-equals-no-sysroot:script-base
+//#ReferenceLinkers:
+//#DriverMode:save-dir-response
+//#AugmentLinkerScript:script-equals-no-sysroot.ld
+
+//#Config:script-forced-sysroot-var-no-sysroot:script-base
+//#ReferenceLinkers:
+//#AugmentLinkerScript:script-sysroot-var-no-sysroot.ld
+
+//#Config:save-script-forced-sysroot-var-no-sysroot:script-base
+//#ReferenceLinkers:
+//#DriverMode:save-dir-response
+//#AugmentLinkerScript:script-sysroot-var-no-sysroot.ld
 
 #include "../common/runtime.h"
 

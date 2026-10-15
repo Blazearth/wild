@@ -3953,8 +3953,24 @@ fn build_obj(
     let src_path = file.path.clone();
 
     if input_type.is_linker_script() {
+        let content = std::fs::read_to_string(&src_path)
+            .with_context(|| format!("Failed to read linker script `{}`", src_path.display()))?;
+        let path = if content.contains(TEMPLATE_OUT_DIR_PLACEHOLDER) {
+            let expanded = expand_test_arg_placeholders(&content, config);
+            let out_path = config.build_dir().join(src_path.file_name().unwrap());
+            std::fs::create_dir_all(config.build_dir())?;
+            std::fs::write(&out_path, expanded).with_context(|| {
+                format!(
+                    "Failed to write generated linker script `{}`",
+                    out_path.display()
+                )
+            })?;
+            out_path
+        } else {
+            src_path
+        };
         return Ok(BuiltObject {
-            path: src_path,
+            path,
             inputs: Vec::new(),
         });
     }
@@ -5070,6 +5086,45 @@ impl LinkCommand {
             );
         }
 
+        // Verify encapsulation of any linker script inputs in save_dir.
+        for input in &self.inputs {
+            if input.path.extension().is_some_and(|e| e == "ld") {
+                let abs_input = std::path::absolute(&input.path)?;
+                let rel = abs_input.strip_prefix("/").unwrap_or(&abs_input);
+                let saved_script = save_dir.join(rel);
+                if saved_script.exists() {
+                    let saved_content = std::fs::read_to_string(&saved_script)?;
+                    let build_dir_str = config.build_dir().display().to_string();
+                    if saved_content.contains(&build_dir_str) {
+                        bail!(
+                            "Saved linker script `{}` still contains original build directory path `{build_dir_str}`:\n{saved_content}",
+                            saved_script.display()
+                        );
+                    }
+                }
+            }
+        }
+
+        // Temporarily hide original archives in config.build_dir() to guarantee replay
+        // is fully self-contained within save-dir and doesn't rely on the original paths.
+        let mut hidden_archives = Vec::new();
+        find_archive_files(&config.build_dir(), &save_dir, &mut hidden_archives);
+        struct RestoreOnDrop(Vec<(PathBuf, PathBuf)>);
+        impl Drop for RestoreOnDrop {
+            fn drop(&mut self) {
+                for (orig, hidden) in &self.0 {
+                    let _ = std::fs::rename(hidden, orig);
+                }
+            }
+        }
+        let mut _restore_guard = RestoreOnDrop(Vec::new());
+        for archive in hidden_archives {
+            let hidden = archive.with_extension("hidden");
+            std::fs::rename(&archive, &hidden)
+                .with_context(|| format!("Failed to hide archive `{}`", archive.display()))?;
+            _restore_guard.0.push((archive, hidden));
+        }
+
         let mut run_save_dir_cmd = Command::new("bash");
         run_save_dir_cmd.arg(&run_with);
         run_save_dir_cmd.arg(wild_path());
@@ -5109,7 +5164,26 @@ impl LinkCommand {
             stderr: stderr.to_owned(),
         })
     }
+}
 
+fn find_archive_files(dir: &Path, save_dir: &Path, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.starts_with(save_dir) {
+            continue;
+        }
+        if path.is_dir() {
+            find_archive_files(&path, save_dir, out);
+        } else if path.extension().is_some_and(|e| e == "a") {
+            out.push(path);
+        }
+    }
+}
+
+impl LinkCommand {
     fn check_messages(
         &self,
         expectations: &[ErrorMatcher],

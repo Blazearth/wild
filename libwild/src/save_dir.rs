@@ -3,7 +3,6 @@
 use crate::FileSystem;
 use crate::archive::ArchiveEntry;
 use crate::archive::ArchiveIterator;
-use crate::args::Modifiers;
 use crate::bail;
 use crate::env;
 use crate::error::Context as _;
@@ -418,9 +417,11 @@ impl SaveDirState {
                             // We don't want to prevent the save-dir mechanism from working just
                             // because we failed to parse a linker script, so in case of failure, we
                             // fall through to just copying the file as-is.
-                            if let Ok(updated_bytes) =
-                                make_linker_script_relative(&data, source_path)
-                            {
+                            if let Ok(updated_bytes) = make_linker_script_relative(
+                                &data,
+                                source_path,
+                                parsed_args.sysroot(),
+                            ) {
                                 std::fs::write(dest_path, updated_bytes)?;
                                 return Ok(());
                             }
@@ -484,36 +485,93 @@ fn create_symlink(target: &Path, dest_path: &Path) -> Result {
     })
 }
 
-fn make_linker_script_relative(bytes: &[u8], source_path: &Path) -> Result<Vec<u8>> {
+fn make_linker_script_relative(
+    bytes: &[u8],
+    source_path: &Path,
+    sysroot: Option<&Path>,
+) -> Result<Vec<u8>> {
     let script = LinkerScript::parse(bytes, source_path)?;
+    let script_dir = source_path.parent().context("Invalid path")?;
+    let base_ptr = bytes.as_ptr() as usize;
 
-    let mut absolute_paths = Vec::new();
-    script.foreach_input(Modifiers::default(), |input| {
-        if let crate::args::InputSpec::File(path) = input.spec
-            && path.is_absolute()
-        {
-            absolute_paths.push(path);
-        }
+    // Collect position-based edits by walking the AST directly. Each Arg node
+    // borrows into the original `bytes` slice, so we can recover exact byte
+    // offsets via pointer arithmetic. This avoids the overlap bug inherent in
+    // global string replacement, where one replacement can modify text
+    // introduced by an earlier replacement.
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    collect_path_edits(&script.commands, base_ptr, script_dir, sysroot, &mut edits)?;
 
-        Ok(())
-    })?;
+    // Sort by offset descending so earlier byte positions remain valid as we
+    // apply later edits.
+    edits.sort_by_key(|a| std::cmp::Reverse(a.0));
 
     let mut text = String::from_utf8(bytes.to_owned())?;
-
-    let script_dir = source_path.parent().context("Invalid path")?;
-
-    for path in absolute_paths {
-        let relative_path = make_relative_path(&path, script_dir);
-        // This shouldn't happen, but we don't want to fail in case it does.
-        let Some(relative_path) = relative_path else {
-            continue;
-        };
-        let relative_str = relative_path.to_str().context("Path isn't valid UTF-8")?;
-        let path_str = path.to_str().context("Path isn't valid UTF-8")?;
-        text = text.replace(path_str, relative_str);
+    for (offset, len, replacement) in edits {
+        text.replace_range(offset..offset + len, &replacement);
     }
 
     Ok(text.into_bytes())
+}
+
+/// Walk the parsed command tree and collect `(byte_offset, byte_len,
+/// replacement_string)` edits for every path token that needs rewriting.
+fn collect_path_edits(
+    commands: &[crate::linker_script::Command],
+    base_ptr: usize,
+    script_dir: &Path,
+    sysroot: Option<&Path>,
+    edits: &mut Vec<(usize, usize, String)>,
+) -> Result {
+    for command in commands {
+        match command {
+            crate::linker_script::Command::Arg(arg) => {
+                if arg.starts_with(b"-l") {
+                    continue;
+                }
+                let path_str = std::str::from_utf8(arg).context("Path isn't valid UTF-8")?;
+                let path = Path::new(path_str);
+
+                let replacement = if path.is_absolute() {
+                    let Some(rel) = make_relative_path(path, script_dir) else {
+                        continue;
+                    };
+                    Some(rel.to_str().context("Path isn't valid UTF-8")?.to_owned())
+                } else if sysroot.is_none() {
+                    if let Some(forced) = crate::linker_script::maybe_forced_sysroot(path, None) {
+                        if forced.is_absolute() {
+                            let Some(rel) = make_relative_path(&forced, script_dir) else {
+                                continue;
+                            };
+                            Some(rel.to_str().context("Path isn't valid UTF-8")?.to_owned())
+                        } else {
+                            Some(
+                                forced
+                                    .to_str()
+                                    .context("Path isn't valid UTF-8")?
+                                    .to_owned(),
+                            )
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(replacement) = replacement {
+                    let offset = arg.as_ptr() as usize - base_ptr;
+                    edits.push((offset, arg.len(), replacement));
+                }
+            }
+            crate::linker_script::Command::Group(subs)
+            | crate::linker_script::Command::AsNeeded(subs) => {
+                collect_path_edits(subs, base_ptr, script_dir, sysroot, edits)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Removes any backtracking components (`..`) and the next component from `path`
@@ -681,5 +739,80 @@ mod tests {
             test_make_relative_path(&a, &b);
             test_make_relative_path(&b, &a);
         }
+    }
+
+    #[test]
+    fn make_linker_script_relative_works() {
+        let script = b"GROUP ( /usr/lib/libc.so =/lib/libvalue.a $SYSROOT/lib/libfoo.a )";
+        let script_path = Path::new("/work/scripts/script.ld");
+
+        // Without sysroot: forced sysroot paths are made relative
+        let without_sysroot = make_linker_script_relative(script, script_path, None).unwrap();
+        let without_str = std::str::from_utf8(&without_sysroot).unwrap();
+        assert_eq!(
+            without_str,
+            "GROUP ( ../../usr/lib/libc.so ../../lib/libvalue.a ../../lib/libfoo.a )"
+        );
+
+        // With sysroot: forced sysroot paths remain untouched (evaluated against --sysroot=$D/...)
+        let with_sysroot =
+            make_linker_script_relative(script, script_path, Some(Path::new("/my/sysroot")))
+                .unwrap();
+        let with_str = std::str::from_utf8(&with_sysroot).unwrap();
+        assert_eq!(
+            with_str,
+            "GROUP ( ../../usr/lib/libc.so =/lib/libvalue.a $SYSROOT/lib/libfoo.a )"
+        );
+    }
+
+    /// Verify that overlapping path tokens don't corrupt each other.
+    ///
+    /// With global string replacement, `=/lib/libvalue.a` and `/lib/libvalue.a`
+    /// share the substring `/lib/libvalue.a`. The second replacement could match
+    /// inside text produced by the first, or the first could consume part of the
+    /// second token. Position-based edits eliminate this class of bug.
+    #[test]
+    fn make_linker_script_relative_overlap() {
+        // Forced path appears before its absolute counterpart.
+        let script = b"GROUP ( =/lib/libvalue.a /lib/libvalue.a )";
+        let script_path = Path::new("/work/scripts/script.ld");
+        let result = make_linker_script_relative(script, script_path, None).unwrap();
+        let result_str = std::str::from_utf8(&result).unwrap();
+        assert_eq!(
+            result_str,
+            "GROUP ( ../../lib/libvalue.a ../../lib/libvalue.a )"
+        );
+
+        // Reversed order: absolute path before forced path.
+        let script = b"GROUP ( /lib/libvalue.a =/lib/libvalue.a )";
+        let result = make_linker_script_relative(script, script_path, None).unwrap();
+        let result_str = std::str::from_utf8(&result).unwrap();
+        assert_eq!(
+            result_str,
+            "GROUP ( ../../lib/libvalue.a ../../lib/libvalue.a )"
+        );
+
+        // $SYSROOT variant overlapping with a plain absolute path.
+        let script = b"GROUP ( $SYSROOT/lib/libvalue.a /lib/libvalue.a )";
+        let result = make_linker_script_relative(script, script_path, None).unwrap();
+        let result_str = std::str::from_utf8(&result).unwrap();
+        assert_eq!(
+            result_str,
+            "GROUP ( ../../lib/libvalue.a ../../lib/libvalue.a )"
+        );
+    }
+
+    /// Verify that paths inside AS_NEEDED are also rewritten, and that -l
+    /// entries are left untouched.
+    #[test]
+    fn make_linker_script_relative_as_needed() {
+        let script = b"GROUP ( AS_NEEDED ( /usr/lib/libm.so -lc =/lib/librt.a ) )";
+        let script_path = Path::new("/work/scripts/script.ld");
+        let result = make_linker_script_relative(script, script_path, None).unwrap();
+        let result_str = std::str::from_utf8(&result).unwrap();
+        assert_eq!(
+            result_str,
+            "GROUP ( AS_NEEDED ( ../../usr/lib/libm.so -lc ../../lib/librt.a ) )"
+        );
     }
 }

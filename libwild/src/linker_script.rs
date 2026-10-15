@@ -1131,7 +1131,7 @@ fn parse_assignment_op(input: &mut &BStr) -> winnow::Result<AssignmentOp> {
             "&=".value(AssignmentOp::BitwiseAnd),
             "|=".value(AssignmentOp::BitwiseOr),
             "^=".value(AssignmentOp::BitwiseXor),
-            ("=", winnow::combinator::not('=')).value(AssignmentOp::Assign),
+            ("=", winnow::combinator::not(alt(('=', '/')))).value(AssignmentOp::Assign),
         )),
     ))
     .parse_next(input)
